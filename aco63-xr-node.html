@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>ACO-63 XR Node 01 | Safari Test</title>
+<style>
+:root{font-family:system-ui,-apple-system,sans-serif}*{box-sizing:border-box}body{max-width:660px;margin:0 auto;padding:22px 18px;line-height:1.5}h1{font-size:1.6rem;line-height:1.22}button{border:1px solid #888;border-radius:12px;padding:14px 16px;font:inherit;font-weight:600;margin:7px 0;width:100%;background:#eee;color:#151515}button:disabled{opacity:.45}pre{border:1px solid #888;border-radius:12px;padding:13px;overflow-wrap:anywhere;white-space:pre-wrap;font-size:.82rem;line-height:1.4}progress{width:100%;height:18px}.pill{border-radius:12px;padding:12px;background:#8882}.small{font-size:.89rem;opacity:.83}.status{font-size:1.1rem;font-weight:650}.success{color:green}.warning{color:darkorange}code{font-size:.9em}
+</style>
+</head>
+<body>
+<h1>ACO-63 · XR Node 01</h1>
+<p><strong>Free browser-only execution test.</strong> Uses Safari already on your iPhone XR. No App Store, wallet, deposit, gas fees, account, or additional software.</p>
+<div class="pill"><strong>What this tests:</strong> 30 genuine browser-local SHA-256 integrity jobs with at most 3 digest requests in flight, stored receipts, and resume after page reload. <strong>It is not</strong> a 24/7 ACO server, the original Python kernel, or a remote-controlled worker.</div>
+<p id="state" class="status" role="status">Ready to test.</p>
+<progress id="progress" value="0" max="30"></progress>
+<p id="count">0 of 30 jobs recorded</p>
+<button id="run">Run / resume 30 jobs</button>
+<button id="verify">Reverify saved receipts</button>
+<button id="copy">Copy test report</button>
+<button id="clear">Clear this device's test</button>
+<pre id="out">No jobs have run on this device.</pre>
+<p class="small">Keep Safari open and the screen awake while testing. iOS may suspend this page when Safari goes into the background. Closing the tab does not guarantee work continues. Results stay in this browser's local storage unless Safari deletes website data. The page stores only test results, no wallet or private information.</p>
+<script>
+(()=>{'use strict';
+const KEY='aco63.xr.node01.r01'; const TOTAL=30; const MAX=3;
+const el=id=>document.getElementById(id); const enc=new TextEncoder();
+let running=false; let halt=false;
+const defaultState=()=>({schema:'aco63-xr-node/0.1',node:'XR-NODE-01',job_total:TOTAL,limit:MAX,receipts:{},last_updated:null});
+let state=read();
+function read(){try{let s=JSON.parse(localStorage.getItem(KEY));if(s?.schema==='aco63-xr-node/0.1' && s.receipts && typeof s.receipts==='object')return s;}catch(_){}return defaultState();}
+function store(){state.last_updated=new Date().toISOString();localStorage.setItem(KEY,JSON.stringify(state));}
+function output(msg,obj){el('state').textContent=msg;el('out').textContent=typeof obj==='string'?obj:JSON.stringify(obj,null,2);render();}
+function render(){const n=Object.keys(state.receipts).filter(k=>/^job-\d\d$/.test(k)).length;el('progress').value=n;el('count').textContent=`${n} of ${TOTAL} jobs recorded`;el('run').disabled=running;el('verify').disabled=running;el('clear').disabled=running;}
+function hex(buf){return Array.from(new Uint8Array(buf),x=>x.toString(16).padStart(2,'0')).join('')}
+function jobPayload(id){return `ACO63:XR-NODE-01:GENESIS-R0.3:integrity-job:${String(id).padStart(2,'0')}|`+'PROOF-OF-LOCAL-EXECUTION|'.repeat(120)}
+async function digest(id){return hex(await crypto.subtle.digest('SHA-256',enc.encode(jobPayload(id))))}
+const idFor=i=>'job-'+String(i).padStart(2,'0');
+async function run(){if(running)return;
+  if(!window.crypto?.subtle || !window.localStorage){output('UNAVAILABLE','Requires secure HTTPS and browser storage.');return}
+  running=true;halt=false;render();const started=performance.now();let next=1;let ok=0,failed=0;
+  output('Running in Safari…','Keep this page open; it is not a background server.');
+  async function lane(){while(next<=TOTAL && !halt){let i=next++;let id=idFor(i);if(state.receipts[id])continue;
+    try{let digestHex=await digest(i);const receipt={job_id:id,algorithm:'SHA-256',digest_hex:digestHex,completed_at:new Date().toISOString(),execution:'browser-local'};
+      state.receipts[id]=receipt;store();ok++;render();}
+    catch(e){failed++;output('Job failed',{job_id:id,error:String(e)});halt=true;}
+  }}
+  await Promise.all(Array.from({length:MAX},()=>lane()));running=false;render();
+  const complete=Object.keys(state.receipts).length===TOTAL;
+  output(complete?'PASS — 30 local jobs recorded': 'INCOMPLETE — run again to resume',{
+    completed:Object.keys(state.receipts).length,total:TOTAL,new_jobs:ok,errors:failed,
+    elapsed_ms:Math.round(performance.now()-started),parallel_digest_requests_at_most:MAX,
+    note:'Browser-local SHA-256 jobs only; not independent hosted workers or real ACO economic execution.'
+  });
+}
+async function verify(){if(running)return;running=true;render();let good=0,bad=[];
+  for(let i=1;i<=TOTAL;i++){let id=idFor(i),r=state.receipts[id];if(!r)continue;
+    try{if(r.digest_hex===await digest(i) && r.job_id===id && r.algorithm==='SHA-256')good++;else bad.push(id)}catch(e){bad.push(`${id}: ${String(e)}`)} }
+  running=false;render();output(bad.length?'FAIL — integrity mismatch':'PASS — saved receipts verified',{
+    checked:good+bad.length,passed:good,failed:bad.length,bad_receipts:bad,missing:TOTAL-good-bad.length,
+    note:'This checks integrity against deterministic payloads, not independent third-party attestations.'
+  });
+}
+function report(){return JSON.stringify({...state,exported_at:new Date().toISOString(),context:'Local browser test; no server connectivity or external settlement.'},null,2)}
+el('run').addEventListener('click',run);el('verify').addEventListener('click',verify);
+el('copy').addEventListener('click',async()=>{try{await navigator.clipboard.writeText(report());output('Report copied','Paste into Notes or share it if you wish; it contains no wallet data.')}catch(e){output('Copy unavailable — select the text below',report())}});
+el('clear').addEventListener('click',()=>{if(running)return;if(!confirm('Clear this iPhone’s 30-job test receipts?'))return;localStorage.removeItem(KEY);state=defaultState();output('Test cleared','Press Run to begin a fresh test.');});
+render();if(Object.keys(state.receipts).length){output('Saved local progress restored', {completed:Object.keys(state.receipts).length,total:TOTAL,last_updated:state.last_updated});}
+})();
+</script>
+</body>
+</html>
