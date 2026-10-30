@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>ACO-63 GENESIS R0.2 — Identity Signature Test</title>
+<style>
+body{font:16px/1.55 system-ui,-apple-system,sans-serif;max-width:660px;margin:auto;padding:20px}
+h1{font-size:1.55rem;line-height:1.3}
+button{font:inherit;display:block;width:100%;padding:14px 12px;margin:12px 0;border:1px solid #888;border-radius:10px}
+button:disabled{opacity:.55}
+pre{white-space:pre-wrap;word-break:break-word;background:#8881;border:1px solid #999;border-radius:10px;padding:15px;font-size:.88rem}
+small{opacity:.8}
+.note{border-left:4px solid #6d82a8;padding-left:12px}
+#status{font-weight:700}
+</style>
+<script defer src="https://cdn.jsdelivr.net/npm/ethers@6.15.0/dist/ethers.umd.min.js" crossorigin="anonymous"></script>
+</head>
+<body>
+<h1>ACO-63 · GENESIS R0.2</h1>
+<p><strong>Identity signature test</strong> — use your existing MetaMask account to sign one explicit, five-minute challenge and verify it in this browser.</p>
+<p class="note"><strong>No payment, gas, transfer, token approval, or delegation.</strong> This page requests account visibility, then a <code>personal_sign</code> message only when you tap Sign. Never enter your recovery phrase.</p>
+<button id="connect">1. Connect MetaMask</button>
+<button id="sign" disabled>2. Sign identity challenge</button>
+<button id="reset">Reset</button>
+<p id="status" role="status">NOT STARTED</p>
+<pre id="output">Open this page inside MetaMask's in-app browser, then tap Connect MetaMask.</pre>
+<small>This is a browser-local demonstration of account-key possession, not an authenticated ACO server session. Production login requires a backend-issued, stored, single-use nonce and independent server verification. Smart-contract accounts may require EIP-1271.</small>
+<script>
+(() => {
+"use strict";
+const el=id=>document.getElementById(id);
+const status=el("status"),output=el("output"),connect=el("connect"),sign=el("sign");
+let account=null,chain=null,busy=false,epoch=0;
+function show(title,details){status.textContent=title;output.textContent=typeof details==="string"?details:JSON.stringify(details,null,2);}
+function lock(v){busy=v;connect.disabled=v;sign.disabled=v||!account;}
+function invalidate(){epoch++;account=null;chain=null;sign.disabled=true;}
+function hexNonce(){const b=new Uint8Array(16);crypto.getRandomValues(b);return Array.from(b,x=>x.toString(16).padStart(2,"0")).join("");}
+const wallet=()=>window.ethereum;
+connect.onclick=async()=>{
+ if(busy)return;
+ lock(true);
+ try{
+  if(!wallet()?.request)throw Error("Wallet provider not found. Use MetaMask's in-app browser.");
+  if(!window.ethers?.verifyMessage)throw Error("Verification library did not load; reload with internet access.");
+  const a=await wallet().request({method:"eth_requestAccounts"});
+  if(!a?.[0]||!ethers.isAddress(a[0]))throw Error("No valid wallet account authorized.");
+  const c=await wallet().request({method:"eth_chainId"});
+  invalidate();account=ethers.getAddress(a[0]);chain=c;
+  show("CONNECTED — READY TO SIGN",{account,chain_id_hex:chain,access:"account visibility only",next:"Tap Sign identity challenge."});
+ }catch(e){invalidate();show("CONNECTION FAILED",String(e.message||e));}
+ finally{lock(false);}
+};
+sign.onclick=async()=>{
+ if(busy||!account)return;
+ lock(true);
+ const initialAccount=account,initialChain=chain,initialEpoch=epoch;
+ try{
+  if(location.protocol!=="https:")throw Error("Open the HTTPS GitHub Pages URL.");
+  if(!window.ethers?.verifyMessage)throw Error("Verification library unavailable.");
+  const [c,a]=await Promise.all([
+    wallet().request({method:"eth_chainId"}),
+    wallet().request({method:"eth_accounts"})
+  ]);
+  if(c!==initialChain||!a.some(x=>x.toLowerCase()===initialAccount.toLowerCase()))
+    throw Error("Wallet changed. Reconnect first.");
+  const issued=new Date(),expires=new Date(issued.getTime()+5*60*1000);
+  const nonce=hexNonce(),domain=location.host,uri=location.origin+location.pathname;
+  const message=`${domain} wants you to sign in with your Ethereum account:\n${initialAccount}\n\nACO-63 GENESIS R0.2 identity check ONLY. No transaction, transfer, payment, token approval, delegation, or spending authority is granted.\n\nURI: ${uri}\nVersion: 1\nChain ID: ${Number.parseInt(initialChain,16)}\nNonce: ${nonce}\nIssued At: ${issued.toISOString()}\nExpiration Time: ${expires.toISOString()}`;
+  show("AWAITING WALLET SIGNATURE",{request:"personal_sign",message,note:"Read the MetaMask prompt before approving. You may reject it."});
+  const signature=await wallet().request({method:"personal_sign",params:[ethers.hexlify(ethers.toUtf8Bytes(message)),initialAccount]});
+  if(epoch!==initialEpoch||Date.now()>expires.getTime())throw Error("Challenge changed or expired; reconnect and retry.");
+  const [currentChain,currentAccounts]=await Promise.all([
+    wallet().request({method:"eth_chainId"}),wallet().request({method:"eth_accounts"})
+  ]);
+  if(currentChain!==initialChain||!currentAccounts.some(x=>x.toLowerCase()===initialAccount.toLowerCase()))
+    throw Error("Wallet changed during signing.");
+  const recovered=ethers.verifyMessage(message,signature);
+  if(recovered.toLowerCase()!==initialAccount.toLowerCase())throw Error("Signature does not match connected address.");
+  show("PASS — IDENTITY SIGNATURE VERIFIED",{
+    signer_matches_account:true,recovered_signer:recovered,
+    domain,chain_id_hex:initialChain,nonce,
+    issued_at:issued.toISOString(),expires_at:expires.toISOString(),
+    verifier:"ethers.verifyMessage (browser-local EOA recovery)",
+    transaction_sent:false,gas_cost:0,
+    production_session_created:false
+  });
+ }catch(e){show("NOT VERIFIED",String(e.message||e));}
+ finally{lock(false);}
+};
+el("reset").onclick=()=>{invalidate();show("RESET","Connect again to make a fresh challenge.");};
+if(wallet()?.on){
+ wallet().on("accountsChanged",()=>{invalidate();show("RECONNECT REQUIRED","Account changed. Reconnect.");});
+ wallet().on("chainChanged",()=>{invalidate();show("RECONNECT REQUIRED","Network changed. Reconnect.");});
+}
+})();
+</script>
+</body>
+</html>
