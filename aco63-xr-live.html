@@ -1,0 +1,53 @@
+<!doctype html><html lang="en"><head><title>ACO-63 | XR Execution Node</title><meta name="viewport" content="width=device-width,initial-scale=1"><meta charset="utf-8"><meta name="color-scheme" content="light dark"><style>
+*{box-sizing:border-box}body{font:16px/1.5 -apple-system,BlinkMacSystemFont,system-ui,sans-serif;max-width:650px;margin:0 auto;padding:17px}h1{font-size:1.45rem;line-height:1.25}h2{font-size:1.12rem}button,input{font:inherit}button{padding:12px;border:1px solid #888;border-radius:9px;width:100%;margin:7px 0;font-weight:650;cursor:pointer}button:disabled{opacity:.48}input{padding:12px;width:100%;border:1px solid #888;border-radius:8px}pre{font-size:.83rem;white-space:pre-wrap;overflow-wrap:anywhere;border:1px solid #888;padding:13px;border-radius:9px}section{border:1px solid #8888;border-radius:12px;padding:12px;margin:14px 0}.good{color:#277b39}.bad{color:#be3434}.muted,small{opacity:.82}.notice{border-left:4px solid #777;padding-left:12px}.code{font:700 1.18rem monospace;letter-spacing:.05em;overflow-wrap:anywhere}label{font-weight:600}nav a{margin-right:9px} .pair{display:none;background:#7772;padding:14px;border-radius:8px} .pair.visible{display:block} .wrap{overflow-wrap:anywhere}
+</style><script defer src="https://cdn.jsdelivr.net/npm/peerjs@1.5.5/dist/peerjs.min.js" integrity="sha512-XEKeWX+mI3Ov+tg2evDlVQFzVOIp4T8J3cNcCEPaEUGpxJV3eZaN8rHuvnFPvQpGJBHPmrozJDMpm2xcDvtmyQ==" crossorigin="anonymous"></script><script defer src="https://cdn.jsdelivr.net/npm/ethers@6.15.0/dist/ethers.umd.min.js" crossorigin="anonymous"></script></head><body><nav><a href="aco63-xr-node.html">Earlier XR test</a></nav><h1>ACO-63 · XR Node 01</h1><p><strong>GENESIS R0.4 — WebRTC job receiver</strong></p><p class="notice">Use Safari on the iPhone XR. No wallet or app required on this phone. Keep Safari foregrounded and the screen awake. A public PeerJS server helps the phones find each other; no persistent server exists yet.</p>
+<section><h2>1 · Start XR listener</h2><button id="start">Start XR node</button><div id="code" class="code">Not connected</div><button id="copy" disabled>Copy XR connection code</button><p class="muted">Type the displayed code on the main iPhone.</p></section>
+<section><h2>2 · Approve your wallet</h2><div id="trusted" class="muted">No wallet paired yet.</div><div id="pair" class="pair"><strong>Incoming wallet pairing request:</strong><p id="requestWallet" class="wrap"></p><p>Compare this full address with MetaMask on your main phone. Approve only your own address.</p><button id="approve">Approve pairing</button><button id="deny">Reject pairing</button></div><button id="forget">Forget paired wallet (reset identity)</button></section>
+<section><h2>3 · Results</h2><div id="status" role="status">NOT STARTED</div><pre id="report">Start XR node to obtain a connection code.</pre><button id="copyReport">Copy last report</button></section><p class="muted">Each signed authorization is checked for wallet, intended XR ID, expiry and one-time nonce before hashing the assigned payload. Accepted nonces and receipts are saved locally. The XR is not an unattended server, and a signed task is not permission to spend money.</p>
+<script>
+
+function $(id){return document.getElementById(id)}
+function log(state,details){$('status').textContent=state;$('status').className=/PASS|READY|CONNECTED|PAIRED|COMPLETED/.test(state)?'good':/FAIL|ERROR|REFUSED|DENIED/.test(state)?'bad':'';$('report').textContent=typeof details==='string'?details:JSON.stringify(details,null,2)}
+function cryptoNonce(n=16){const b=new Uint8Array(n);crypto.getRandomValues(b);return Array.from(b,v=>v.toString(16).padStart(2,'0')).join('')}
+function grantMessage(g){return ['ACO-63 GENESIS R0.4','One browser-local SHA-256 integrity job ONLY.','No transfer, transaction, delegation or spending permission.','Wallet: '+g.wallet,'XR Node ID: '+g.xr_id,'Job ID: '+g.job_id,'Payload: '+g.payload,'Nonce: '+g.nonce,'Expires At: '+g.expires_at].join('\n')}
+function digestHex(text){return crypto.subtle.digest('SHA-256',new TextEncoder().encode(text)).then(buf=>Array.from(new Uint8Array(buf),v=>v.toString(16).padStart(2,'0')).join(''))}
+function shortAddress(a){return a?a.slice(0,8)+'…'+a.slice(-6):''}
+function peerError(e){log('CONNECTION ERROR',String(e?.message||e)+' — Keep both pages open. Some networks block peer-to-peer connections; this is not a permanent server.')}
+
+const STORE='aco63.xr.p2p.r04';const TRUST='aco63.xr.p2p.owner';let state=load();let trusted=localStorage.getItem(TRUST)||null;let peer=null,connection=null,asking=null,peerId=null,busy=false;
+function load(){try{const val=JSON.parse(localStorage.getItem(STORE));if(val&&typeof val.seen==='object'&&typeof val.receipts==='object')return val;}catch(_){}return {schema:'aco63-xr-p2p/0.4',seen:{},receipts:{}}}
+function save(){localStorage.setItem(STORE,JSON.stringify(state))}
+function renderTrust(){$('trusted').textContent=trusted?'Trusted wallet: '+trusted:'No trusted wallet stored. First valid pairing requires your approval.'}
+renderTrust();
+$('start').onclick=()=>{try{if(peer)peer.destroy();if(!window.Peer||!window.ethers?.verifyMessage)throw Error('PeerJS or signature verifier not loaded. Reload when online.');peerId='xr-'+cryptoNonce(7).slice(0,10);peer=new Peer(peerId,{debug:1});$('start').disabled=true;log('STARTING','Contacting public PeerJS signaling server…');peer.on('open',id=>{peerId=id;$('code').textContent=id;$('copy').disabled=false;log('XR READY','Enter this code on your main iPhone: '+id)});peer.on('connection',conn=>{if(connection?.open){conn.close();return}connection=conn;conn.on('open',()=>log('PAIRING REQUEST EXPECTED','Waiting for your main iPhone to request a connection.'));conn.on('data',msg=>handle(msg,conn));conn.on('close',()=>{asking=null;$('pair').classList.remove('visible');connection=null;log('XR READY','Connection closed; still listening for your main iPhone.')});conn.on('error',peerError)});peer.on('error',e=>{peerError(e);$('start').disabled=false});peer.on('disconnected',()=>log('SIGNALING DISCONNECTED','Network unavailable. If needed, restart XR node.'))}catch(e){peerError(e);$('start').disabled=false}};
+function send(conn,msg){if(conn?.open)conn.send(msg)}
+async function handle(msg,conn){if(!msg||typeof msg!=='object')return;
+if(msg.kind==='pair_request'){const w=msg.wallet;if(!ethers.isAddress(w)){send(conn,{kind:'pair_denied',reason:'Invalid address'});return}const normalized=ethers.getAddress(w);if(trusted&&trusted.toLowerCase()!==normalized.toLowerCase()){send(conn,{kind:'pair_denied',reason:'This XR already trusts another wallet. Reset explicitly on XR to change.'});return}if(trusted){send(conn,{kind:'pair_accepted',wallet:trusted});log('PAIRED','Trusted wallet reconnected: '+trusted);return}asking={conn,wallet:normalized};$('requestWallet').textContent=normalized;$('pair').classList.add('visible');log('APPROVAL REQUIRED','Compare wallet address and tap Approve pairing on XR.');return}
+if(msg.kind!=='execute_job')return;
+const g=msg.grant||{};const reject=reason=>{send(conn,{kind:'job_rejected',job_id:g.job_id,reason});log('JOB REFUSED',reason)};
+try{
+ if(!trusted)throw Error('Wallet has not been paired.');
+ if(!peerId||g.xr_id!==peerId)throw Error('Wrong XR node.');
+ if(typeof g.job_id!=='string'||!/^job-[0-9a-f]{16}$/.test(g.job_id))throw Error('Invalid job ID.');
+ if(typeof g.payload!=='string'||!/^ACO63-GENESIS-R0\.4-[0-9a-f]{32}-SHA256$/.test(g.payload))throw Error('Unexpected job type/payload.');
+ if(typeof g.nonce!=='string'||! /^[0-9a-f]{32}$/.test(g.nonce))throw Error('Invalid nonce.');
+ if(typeof g.wallet!=='string'||g.wallet.toLowerCase()!==trusted.toLowerCase())throw Error('Unauthorized wallet.');
+ if(typeof g.expires_at!=='string'||!Number.isFinite(Date.parse(g.expires_at)))throw Error('Invalid expiration.');
+ const remaining=Date.parse(g.expires_at)-Date.now();if(remaining<=0||remaining>180000)throw Error('Expired or excessive permission window.');
+ if(state.seen[g.nonce]||state.receipts[g.job_id])throw Error('Replayed authorization.');
+ if(typeof msg.signature!=='string'||msg.signature.length<120)throw Error('No valid signature provided.');
+ const recovered=ethers.verifyMessage(grantMessage(g),msg.signature);
+ if(recovered.toLowerCase()!==trusted.toLowerCase())throw Error('Signature does not match trusted wallet.');
+ // Record nonce before processing so replay cannot execute twice.
+ state.seen[g.nonce]={job_id:g.job_id,accepted_at:new Date().toISOString()};save();
+ const hash=await digestHex(g.payload);
+ const receipt={kind:'job_receipt',job_id:g.job_id,xr_id:peerId,wallet:trusted,digest_hex:hash,completed_at:new Date().toISOString(),signature_verified:true,transport:'WebRTC'};
+ state.receipts[g.job_id]=receipt;save();send(conn,receipt);log('PASS — JOB COMPLETED',{...receipt,received_job_payload:g.payload,local_receipt_count:Object.keys(state.receipts).length});
+ }catch(e){reject(String(e?.message||e))}
+}
+$('approve').onclick=()=>{if(!asking)return;trusted=asking.wallet;localStorage.setItem(TRUST,trusted);renderTrust();send(asking.conn,{kind:'pair_accepted',wallet:trusted});$('pair').classList.remove('visible');asking=null;log('PAIRED','Main wallet authorized to submit signed local test jobs: '+trusted)};
+$('deny').onclick=()=>{if(asking)send(asking.conn,{kind:'pair_denied',reason:'XR operator rejected wallet pairing.'});asking=null;$('pair').classList.remove('visible');log('PAIRING REFUSED','No change to trusted wallet.');};
+$('forget').onclick=()=>{if(!confirm('Forget the trusted wallet? This allows you to pair a different wallet in a future session.'))return;trusted=null;localStorage.removeItem(TRUST);if(connection?.open)connection.close();renderTrust();log('WALLET FORGOTTEN','Paired wallet removed from local XR storage. Prior receipts remain.')};
+$('copy').onclick=async()=>{try{await navigator.clipboard.writeText(peerId);log('CODE COPIED',peerId)}catch(e){log('COPY UNAVAILABLE','Type this code on main iPhone: '+peerId)}};
+$('copyReport').onclick=async()=>{try{await navigator.clipboard.writeText($('report').textContent);log('REPORT COPIED','Paste into Notes or ChatGPT when ready.')}catch(e){log('COPY UNAVAILABLE',$('report').textContent)}};
+</script></body></html>
