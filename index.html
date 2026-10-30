@@ -1,0 +1,15 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>ACO-63 | Read-only MetaMask Discovery</title><style>
+body{font:16px system-ui,sans-serif;max-width:650px;margin:0 auto;padding:20px;line-height:1.5}button{font:inherit;padding:12px 15px;border:1px solid #888;border-radius:9px;margin:6px 6px 6px 0;cursor:pointer}pre{white-space:pre-wrap;word-break:break-word;border:1px solid #888;border-radius:8px;padding:14px}small{opacity:.8}
+</style></head><body><h1>ACO-63 — wallet discovery</h1>
+<p>Read-only verification of the network and the account you explicitly authorize this page to view. <strong>No transaction, signature, transfer, delegation or spending function exists in this file.</strong></p>
+<button id="detect">Detect injected provider</button><button id="connect">Request account access</button><button id="inspect">Read chain and balance</button>
+<pre id="out" role="status">No wallet access requested.</pre>
+<small>On iPhone, open this page through MetaMask's in-app browser for injected-provider testing. For ordinary mobile Safari, use a proper MetaMask Connect integration in the next implementation; this static probe does not implement cross-app linking. Never type or paste a recovery phrase into any ACO page.</small>
+<script type="module">
+const out=document.querySelector('#out');let account=null;
+function display(v){out.textContent=JSON.stringify(v,null,2)}
+const wallet=()=>window.ethereum;
+document.querySelector('#detect').onclick=()=>display({injected_provider_present:!!wallet(),has_request:typeof wallet()?.request==='function',note:'No permissions requested.'});
+document.querySelector('#connect').onclick=async()=>{try{if(!wallet())throw Error('No EIP-1193 provider: use MetaMask in-app browser.');const accounts=await wallet().request({method:'eth_requestAccounts'});account=accounts[0]||null;display({authorized_account:account,notice:'Account visibility only; no transactions authorized.'})}catch(e){display({error:String(e)})}};
+document.querySelector('#inspect').onclick=async()=>{try{if(!account)throw Error('Authorize an account first.');const [chain,balance]=await Promise.all([wallet().request({method:'eth_chainId'}),wallet().request({method:'eth_getBalance',params:[account,'latest']})]);display({account,chain_id_hex:chain,network_native_balance_wei_hex:balance,read_only:true,no_transaction_sent:true})}catch(e){display({error:String(e)})}};
+</script></body></html>
