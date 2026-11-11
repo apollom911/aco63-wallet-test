@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Local Inspection Encryption Key Generator</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+        sans-serif;
+    }
+
+    body {
+      max-width: 52rem;
+      margin: 0 auto;
+      padding: 1.5rem;
+      line-height: 1.55;
+    }
+
+    h1 { line-height: 1.2; }
+
+    .warning {
+      border: 2px solid #b42318;
+      border-radius: 0.5rem;
+      padding: 1rem;
+      margin: 1rem 0;
+    }
+
+    .notice {
+      border: 1px solid currentColor;
+      border-radius: 0.5rem;
+      padding: 1rem;
+      margin: 1rem 0;
+    }
+
+    button, a.button {
+      display: inline-block;
+      margin: 0.5rem 0.5rem 0.5rem 0;
+      padding: 0.65rem 0.9rem;
+      font: inherit;
+    }
+
+    textarea {
+      box-sizing: border-box;
+      width: 100%;
+      min-height: 14rem;
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      overflow-wrap: anywhere;
+    }
+
+    #status {
+      min-height: 1.5em;
+      font-weight: 600;
+    }
+
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Local Inspection Encryption Key Generator</h1>
+
+    <p>
+      This page generates an RSA-OAEP 3072-bit key pair with SHA-256 using
+      this browser’s Web Crypto API. Key generation and the test run locally
+      in your browser.
+    </p>
+
+    <section class="warning" aria-labelledby="private-key-warning">
+      <h2 id="private-key-warning">Protect the private key</h2>
+      <p>
+        <strong>
+          Never upload the private key to GitHub, send it to Copilot, or paste
+          it into ChatGPT.
+        </strong>
+        This page does not transmit either key to a server or external service.
+      </p>
+      <p>
+        Download the private key and back it up securely. If it is lost, the
+        encrypted inspection artifact cannot be decrypted. Anyone who obtains
+        the private key may be able to decrypt artifacts encrypted for its
+        matching public key.
+      </p>
+    </section>
+
+    <section class="notice">
+      <p>
+        This utility is independent of Cloudflare credentials and production
+        systems. It does not request or use a Cloudflare token.
+      </p>
+      <p>
+        Use a browser that supports Web Crypto RSA-OAEP. If opening this file
+        directly does not provide <code>crypto.subtle</code>, use a trusted
+        local secure context. Do not upload the private key to make the page
+        work.
+      </p>
+    </section>
+
+    <button id="generate" type="button">Generate and test key pair</button>
+    <p id="status" role="status" aria-live="polite">No key pair generated.</p>
+
+    <section id="key-output" hidden>
+      <h2>Public key (PEM/SPKI)</h2>
+      <p>
+        This is the public key. It is intended for encryption and may be
+        copied into the workflow after review.
+      </p>
+      <textarea id="public-key" readonly spellcheck="false"
+        aria-label="Public key in PEM format"></textarea>
+      <button id="copy-public" type="button">Copy public key</button>
+      <a id="download-private" class="button" hidden>Download private key PEM</a>
+
+      <p>
+        The private key is not displayed on this page. Download it and store
+        it securely outside the repository and GitHub Actions.
+      </p>
+    </section>
+
+    <noscript>
+      JavaScript must be enabled to generate and test a key pair. This page
+      contains no remote scripts.
+    </noscript>
+  </main>
+
+  <script>
+    "use strict";
+
+    const generateButton = document.getElementById("generate");
+    const statusElement = document.getElementById("status");
+    const outputSection = document.getElementById("key-output");
+    const publicKeyArea = document.getElementById("public-key");
+    const copyButton = document.getElementById("copy-public");
+    const privateDownload = document.getElementById("download-private");
+
+    let privateDownloadUrl = null;
+
+    function bytesToBase64(bytes) {
+      let binary = "";
+      const chunkSize = 0x8000;
+
+      for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+        const chunk = bytes.subarray(offset, offset + chunkSize);
+        binary += String.fromCharCode(...chunk);
+      }
+
+      return btoa(binary);
+    }
+
+    function toPem(label, arrayBuffer) {
+      const bytes = new Uint8Array(arrayBuffer);
+      const base64 = bytesToBase64(bytes);
+      const lines = base64.match(/.{1,64}/g) || [];
+      return `-----BEGIN ${label}-----\n${lines.join("\n")}\n-----END ${label}-----\n`;
+    }
+
+    function equalBytes(left, right) {
+      if (left.length !== right.length) return false;
+
+      let difference = 0;
+      for (let index = 0; index < left.length; index += 1) {
+        difference |= left[index] ^ right[index];
+      }
+      return difference === 0;
+    }
+
+    function clearPreviousOutput() {
+      outputSection.hidden = true;
+      publicKeyArea.value = "";
+      privateDownload.removeAttribute("href");
+      privateDownload.hidden = true;
+
+      if (privateDownloadUrl !== null) {
+        URL.revokeObjectURL(privateDownloadUrl);
+        privateDownloadUrl = null;
+      }
+    }
+
+    generateButton.addEventListener("click", async () => {
+      clearPreviousOutput();
+      generateButton.disabled = true;
+      statusElement.textContent = "Generating keys and running local test…";
+
+      try {
+        if (!globalThis.crypto || !globalThis.crypto.subtle) {
+          throw new Error("Web Crypto is unavailable in this browser context.");
+        }
+
+        const keyPair = await crypto.subtle.generateKey(
+          {
+            name: "RSA-OAEP",
+            modulusLength: 3072,
+            publicExponent: new Uint8Array([0x01, 0x00, 0x01]),
+            hash: "SHA-256"
+          },
+          true,
+          ["encrypt", "decrypt"]
+        );
+
+        // Test a temporary random message entirely in this browser.
+        const message = crypto.getRandomValues(new Uint8Array(32));
+        const ciphertext = await crypto.subtle.encrypt(
+          { name: "RSA-OAEP" },
+          keyPair.publicKey,
+          message
+        );
+        const plaintext = await crypto.subtle.decrypt(
+          { name: "RSA-OAEP" },
+          keyPair.privateKey,
+          ciphertext
+        );
+
+        if (!equalBytes(message, new Uint8Array(plaintext))) {
+          throw new Error("The local encryption/decryption test did not match.");
+        }
+
+        const publicDer = await crypto.subtle.exportKey("spki", keyPair.publicKey);
+        const privateDer = await crypto.subtle.exportKey("pkcs8", keyPair.privateKey);
+        const publicPem = toPem("PUBLIC KEY", publicDer);
+        const privatePem = toPem("PRIVATE KEY", privateDer);
+
+        publicKeyArea.value = publicPem;
+
+        const privateBlob = new Blob([privatePem], {
+          type: "application/x-pem-file"
+        });
+        privateDownloadUrl = URL.createObjectURL(privateBlob);
+        privateDownload.href = privateDownloadUrl;
+        privateDownload.download = "aco-inspection-private-key.pem";
+        privateDownload.hidden = false;
+
+        outputSection.hidden = false;
+        statusElement.textContent =
+          "Local encrypt/decrypt test passed. The key pair is usable.";
+      } catch (error) {
+        clearPreviousOutput();
+        statusElement.textContent =
+          "Key generation or the local test failed. No key pair is available. " +
+          (error instanceof Error ? error.message : "Check browser support.");
+      } finally {
+        generateButton.disabled = false;
+      }
+    });
+
+    copyButton.addEventListener("click", async () => {
+      if (!publicKeyArea.value) return;
+
+      try {
+        await navigator.clipboard.writeText(publicKeyArea.value);
+        statusElement.textContent = "Public key copied to the clipboard.";
+      } catch {
+        publicKeyArea.focus();
+        publicKeyArea.select();
+        statusElement.textContent =
+          "Clipboard access was unavailable. The public key is selected for copying.";
+      }
+    });
+  </script>
+</body>
+</html>
